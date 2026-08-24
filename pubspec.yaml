@@ -1,118 +1,19 @@
-name: Build APK
+name: mistake_book
+description: Offline Error Tracker App
+publish_to: 'none'
+version: 1.0.0+1
 
-on:
-  push:
-    branches: [ main, master ]
-  workflow_dispatch:
+environment:
+  sdk: '>=3.0.0 <4.0.0'
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+dependencies:
+  flutter:
+    sdk: flutter
+  sqflite: any
+  path_provider: any
+  path: any
+  receive_sharing_intent: any
+  image_picker: any
 
-      - name: Set up Java 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: 'stable'
-
-      - name: Generate Android Setup & Consistent Keystore
-        run: |
-          mkdir -p /tmp/backup
-          cp pubspec.yaml /tmp/backup/
-          cp lib/main.dart /tmp/backup/
-
-          rm -rf * .git* || true
-          git init
-          flutter create --org com.example --project-name mistake_book .
-
-          cp /tmp/backup/pubspec.yaml ./
-          cp /tmp/backup/main.dart ./lib/
-
-          # 1. Generate a fixed keystore with permanent credentials
-          keytool -genkey -v -keystore android/app/upload-keystore.jks \
-            -alias upload -keyalg RSA -keysize 2048 -validity 10000 \
-            -storepass "mistake_book_key_123" -keypass "mistake_book_key_123" \
-            -dname "CN=MistakeBook, OU=App, O=MistakeBook, L=City, S=State, C=IN"
-
-          # 2. Configure Gradle to sign release builds with this fixed key
-          cat << 'EOF' > android/key.properties
-          storePassword=mistake_book_key_123
-          keyPassword=mistake_book_key_123
-          keyAlias=upload
-          storeFile=upload-keystore.jks
-          EOF
-
-          # 3. Configure app/build.gradle to use signing config
-          python3 -c "
-          with open('android/app/build.gradle', 'r') as f:
-              gradle = f.read()
-
-          keystore_config = '''
-          def keystoreProperties = new Properties()
-          def keystorePropertiesFile = rootProject.file('key.properties')
-          if (keystorePropertiesFile.exists()) {
-              keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
-          }
-
-          android {
-          '''
-          gradle = gradle.replace('android {', keystore_config, 1)
-
-          signing_block = '''
-              signingConfigs {
-                  release {
-                      keyAlias 'upload'
-                      keyPassword 'mistake_book_key_123'
-                      storeFile file('upload-keystore.jks')
-                      storePassword 'mistake_book_key_123'
-                  }
-              }
-              buildTypes {
-                  release {
-                      signingConfig signingConfigs.release
-                  }
-              }
-          '''
-          if 'signingConfigs {' not in gradle:
-              gradle = gradle.replace('buildTypes {', signing_block, 1)
-
-          with open('android/app/build.gradle', 'w') as f:
-              f.write(gradle)
-          "
-
-          # 4. Safely inject Share Intent into AndroidManifest
-          python3 -c "
-          with open('android/app/src/main/AndroidManifest.xml', 'r') as f:
-              content = f.read()
-          intent_str = '''
-                      <intent-filter>
-                          <action android:name=\"android.intent.action.SEND\" />
-                          <category android:name=\"android.intent.category.DEFAULT\" />
-                          <data android:mimeType=\"image/*\" />
-                      </intent-filter>
-                  </activity>'''
-          if '<data android:mimeType=\"image/*\" />' not in content:
-              content = content.replace('</activity>', intent_str, 1)
-              with open('android/app/src/main/AndroidManifest.xml', 'w') as f:
-                  f.write(content)
-          "
-
-      - name: Install dependencies
-        run: flutter pub get
-
-      - name: Build Release APK
-        run: flutter build apk --release --no-tree-shake-icons
-
-      - name: Upload APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: mistake-book-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+flutter:
+  uses-material-design: true
