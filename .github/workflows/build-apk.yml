@@ -23,13 +23,6 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Restore Permanent Keystore from Cache
-        id: cache-keystore
-        uses: actions/cache@v4
-        with:
-          path: upload-keystore.jks
-          key: permanent-mistake-book-keystore-v1
-
       - name: Setup Project Structure & Dependencies
         run: |
           mkdir -p /tmp/app_code
@@ -43,44 +36,50 @@ jobs:
 
       - name: Setup Permanent Signing Key
         run: |
-          # If keystore was cached, restore it to android/app/
-          if [ -f upload-keystore.jks ]; then
-            cp upload-keystore.jks android/app/upload-keystore.jks
-          else
-            # Generate the permanent key once and save for caching
-            keytool -genkeypair -alias upload -keyalg RSA -keysize 2048 -validity 10000 \
-              -keystore android/app/upload-keystore.jks -storepass mistake_book_key_123 \
-              -keypass mistake_book_key_123 -dname "CN=MistakeBook, O=MistakeBook, C=IN"
-            cp android/app/upload-keystore.jks ./upload-keystore.jks
-          fi
+          mkdir -p ~/.android
+          mkdir -p android/app
 
-          cat << 'EOF' > android/key.properties
-          storePassword=mistake_book_key_123
-          keyPassword=mistake_book_key_123
-          keyAlias=upload
-          storeFile=upload-keystore.jks
-          EOF
+          # Create permanent keystore with fixed credentials
+          keytool -genkeypair -alias upload -keyalg RSA -keysize 2048 -validity 10000 \
+            -keystore android/app/upload-keystore.jks -storepass mistake_book_key_123 \
+            -keypass mistake_book_key_123 -dname "CN=MistakeBook, O=MistakeBook, C=IN"
 
-      - name: Configure Gradle and AndroidManifest
+          # Mirror to debug keystore location for seamless fallback
+          cp android/app/upload-keystore.jks ~/.android/debug.keystore
+
+      - name: Configure Manifest and Build Files
         run: |
-          python3 - << 'EOF'
-          # 1. Update android/app/build.gradle for permanent signing
-          with open('android/app/build.gradle', 'r') as f:
-              gradle = f.read()
+          python3 -c "
+          import os
 
-          keystore_config = """
-          def keystoreProperties = new Properties()
-          def keystorePropertiesFile = rootProject.file('key.properties')
-          if (keystorePropertiesFile.exists()) {
-              keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
-          }
+          # 1. Safely add Share Intent to AndroidManifest.xml
+          manifest_path = 'android/app/src/main/AndroidManifest.xml'
+          if os.path.exists(manifest_path):
+              with open(manifest_path, 'r', encoding='utf-8') as f:
+                  manifest = f.read()
 
-          android {
-          """
-          if 'keystoreProperties' not in gradle:
-              gradle = gradle.replace('android {', keystore_config, 1)
+              intent_block = '''
+                      <intent-filter>
+                          <action android:name=\"android.intent.action.SEND\" />
+                          <category android:name=\"android.intent.category.DEFAULT\" />
+                          <data android:mimeType=\"image/*\" />
+                      </intent-filter>
+                  </activity>'''
 
-          signing_config = """
+              if 'android.intent.action.SEND' not in manifest and '</activity>' in manifest:
+                  manifest = manifest.replace('</activity>', intent_block, 1)
+                  with open(manifest_path, 'w', encoding='utf-8') as f:
+                      f.write(manifest)
+
+          # 2. Configure permanent signing in Groovy or Kotlin DSL
+          gradle_groovy = 'android/app/build.gradle'
+          gradle_kotlin = 'android/app/build.gradle.kts'
+
+          if os.path.exists(gradle_groovy):
+              with open(gradle_groovy, 'r', encoding='utf-8') as f:
+                  gradle = f.read()
+              if 'signingConfigs {' not in gradle and 'buildTypes {' in gradle:
+                  signing = '''
               signingConfigs {
                   release {
                       keyAlias 'upload'
@@ -94,30 +93,34 @@ jobs:
                       signingConfig signingConfigs.release
                   }
               }
-          """
-          if 'signingConfigs {' not in gradle:
-              gradle = gradle.replace('buildTypes {', signing_config, 1)
+          '''
+                  gradle = gradle.replace('buildTypes {', signing, 1)
+                  with open(gradle_groovy, 'w', encoding='utf-8') as f:
+                      f.write(gradle)
 
-          with open('android/app/build.gradle', 'w') as f:
-              f.write(gradle)
-
-          # 2. Add share intent filter to AndroidManifest.xml
-          with open('android/app/src/main/AndroidManifest.xml', 'r') as f:
-              manifest = f.read()
-
-          intent_block = """
-                      <intent-filter>
-                          <action android:name="android.intent.action.SEND" />
-                          <category android:name="android.intent.category.DEFAULT" />
-                          <data android:mimeType="image/*" />
-                      </intent-filter>
-                  </activity>"""
-
-          if 'android.intent.action.SEND' not in manifest:
-              manifest = manifest.replace('</activity>', intent_block, 1)
-              with open('android/app/src/main/AndroidManifest.xml', 'w') as f:
-                  f.write(manifest)
-          EOF
+          elif os.path.exists(gradle_kotlin):
+              with open(gradle_kotlin, 'r', encoding='utf-8') as f:
+                  gradle = f.read()
+              if 'signingConfigs {' not in gradle and 'buildTypes {' in gradle:
+                  signing = '''
+              signingConfigs {
+                  create(\"release\") {
+                      keyAlias = \"upload\"
+                      keyPassword = \"mistake_book_key_123\"
+                      storeFile = file(\"upload-keystore.jks\")
+                      storePassword = \"mistake_book_key_123\"
+                  }
+              }
+              buildTypes {
+                  release {
+                      signingConfig = signingConfigs.getByName(\"release\")
+                  }
+              }
+          '''
+                  gradle = gradle.replace('buildTypes {', signing, 1)
+                  with open(gradle_kotlin, 'w', encoding='utf-8') as f:
+                      f.write(gradle)
+          "
 
       - name: Build Release APK
         run: flutter build apk --release --no-tree-shake-icons
