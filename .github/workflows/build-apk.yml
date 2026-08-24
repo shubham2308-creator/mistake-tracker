@@ -24,12 +24,15 @@ jobs:
           flutter-version: '3.19.6'
           channel: 'stable'
 
-      - name: Create basic project scaffolding
+      - name: Generate Complete Scaffolding
         run: |
-          mkdir -p android/app
-          if [ ! -f android/build.gradle ]; then
-            echo "allprojects { repositories { google(); mavenCentral() } }" > android/build.gradle
-          fi
+          mkdir temp_app
+          flutter create --org com.example --project-name mistake_book temp_app
+          cp -r temp_app/android ./
+          rm -rf temp_app
+          
+          # Inject share intent into AndroidManifest
+          sed -i '/<\/activity>/i <intent-filter><action android:name="android.intent.action.SEND" \/><category android:name="android.intent.category.DEFAULT" \/><data android:mimeType="image\/*" \/><\/intent-filter>' android/app/src/main/AndroidManifest.xml
 
       - name: Install dependencies
         run: flutter pub get
