@@ -23,37 +23,35 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Generate Android Setup & Permanent Signature
+      - name: Restore Permanent Keystore from Cache
+        id: cache-keystore
+        uses: actions/cache@v4
+        with:
+          path: upload-keystore.jks
+          key: permanent-mistake-book-keystore-v1
+
+      - name: Setup Project Structure & Dependencies
         run: |
-          mkdir -p /tmp/backup
-          cp lib/main.dart /tmp/backup/
+          mkdir -p /tmp/app_code
+          cp lib/main.dart /tmp/app_code/main.dart
 
-          rm -rf * .git* || true
-          git init
-          flutter create --org com.example --project-name mistake_book .
-
-          cp /tmp/backup/main.dart ./lib/
+          flutter create --org com.example --project-name mistake_book /tmp/flutter_scaffold
+          cp -r /tmp/flutter_scaffold/android ./
+          cp /tmp/app_code/main.dart ./lib/main.dart
 
           flutter pub add sqflite path_provider path receive_sharing_intent image_picker
 
-          # Write a fixed, permanent base64-encoded keystore
-          cat << 'EOF' > android/app/upload-keystore.jks.b64
-          /u3+7QAAAAIAAAABAAAAAQAFY2VydDEAAAGZp32d8AAABTCCAU8wDAYDVR0TAQH/BAUwAwEB/zAL
-          BgNVHQ8EBAMCAQYwEwYDVR0lBAwwCgYIKwYBBQUHAwEwHQYDVR0OBBYEFGv4jG4y97Vp1U9M8E7d
-          F2p9v4+RMB8GA1UdIwQYMBaAFGv4jG4y97Vp1U9M8E7dF2p9v4+RMCEGA1UEAwwaTWlzdGFrZUJv
-          b2sgQXBwIFNpZ25hdHVyZTELMAkGA1UEBhMCSU4wHhcNMjQwMTAxMDAwMDAwWhcNMzQwMTAxMDAw
-          MDAwWjAhMRswGQYDVQQDDBJNaXN0YWtlQm9vayBTaWduZXIxCzAJBgNVBAYTAklOMA8wDQYJKoZI
-          hvcNAQEBBQADSwAwSAJBAL6UvT6/K1W8M7j7mZtFw1i3o9kP0r4z9A1b7v5Q3m4s0q3w6s8b1f2
-          t3d0a2v6s9e7c5b3k2a1v9x8c7m5a3wECAwEAAaMhMB8wHQYDVR0OBBYEFGv4jG4y97Vp1U9M8E
-          7dF2p9v4+RMA0GCSqGSIb3DQEBCwUAA0EAQv5a4b7m3s2v8c7e9a0f1b2c3d4e5f6a7b8c9d0e
-          1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5g==
-          EOF
-
-          # If the pre-made cert fails decoding, create a deterministic key pair once based on a fixed random seed
-          if ! base64 -d android/app/upload-keystore.jks.b64 > android/app/upload-keystore.jks 2>/dev/null || [ ! -s android/app/upload-keystore.jks ]; then
+      - name: Setup Permanent Signing Key
+        run: |
+          # If keystore was cached, restore it to android/app/
+          if [ -f upload-keystore.jks ]; then
+            cp upload-keystore.jks android/app/upload-keystore.jks
+          else
+            # Generate the permanent key once and save for caching
             keytool -genkeypair -alias upload -keyalg RSA -keysize 2048 -validity 10000 \
               -keystore android/app/upload-keystore.jks -storepass mistake_book_key_123 \
               -keypass mistake_book_key_123 -dname "CN=MistakeBook, O=MistakeBook, C=IN"
+            cp android/app/upload-keystore.jks ./upload-keystore.jks
           fi
 
           cat << 'EOF' > android/key.properties
@@ -63,11 +61,14 @@ jobs:
           storeFile=upload-keystore.jks
           EOF
 
-          python3 -c "
+      - name: Configure Gradle and AndroidManifest
+        run: |
+          python3 - << 'EOF'
+          # 1. Update android/app/build.gradle for permanent signing
           with open('android/app/build.gradle', 'r') as f:
               gradle = f.read()
 
-          keystore_config = '''
+          keystore_config = """
           def keystoreProperties = new Properties()
           def keystorePropertiesFile = rootProject.file('key.properties')
           if (keystorePropertiesFile.exists()) {
@@ -75,10 +76,11 @@ jobs:
           }
 
           android {
-          '''
-          gradle = gradle.replace('android {', keystore_config, 1)
+          """
+          if 'keystoreProperties' not in gradle:
+              gradle = gradle.replace('android {', keystore_config, 1)
 
-          signing_block = '''
+          signing_config = """
               signingConfigs {
                   release {
                       keyAlias 'upload'
@@ -92,29 +94,30 @@ jobs:
                       signingConfig signingConfigs.release
                   }
               }
-          '''
+          """
           if 'signingConfigs {' not in gradle:
-              gradle = gradle.replace('buildTypes {', signing_block, 1)
+              gradle = gradle.replace('buildTypes {', signing_config, 1)
 
           with open('android/app/build.gradle', 'w') as f:
               f.write(gradle)
-          "
 
-          python3 -c "
+          # 2. Add share intent filter to AndroidManifest.xml
           with open('android/app/src/main/AndroidManifest.xml', 'r') as f:
-              content = f.read()
-          intent_str = '''
+              manifest = f.read()
+
+          intent_block = """
                       <intent-filter>
-                          <action android:name=\"android.intent.action.SEND\" />
-                          <category android:name=\"android.intent.category.DEFAULT\" />
-                          <data android:mimeType=\"image/*\" />
+                          <action android:name="android.intent.action.SEND" />
+                          <category android:name="android.intent.category.DEFAULT" />
+                          <data android:mimeType="image/*" />
                       </intent-filter>
-                  </activity>'''
-          if '<data android:mimeType=\"image/*\" />' not in content:
-              content = content.replace('</activity>', intent_str, 1)
+                  </activity>"""
+
+          if 'android.intent.action.SEND' not in manifest:
+              manifest = manifest.replace('</activity>', intent_block, 1)
               with open('android/app/src/main/AndroidManifest.xml', 'w') as f:
-                  f.write(content)
-          "
+                  f.write(manifest)
+          EOF
 
       - name: Build Release APK
         run: flutter build apk --release --no-tree-shake-icons
