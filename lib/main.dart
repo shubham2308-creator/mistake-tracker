@@ -186,6 +186,7 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _loadQuestions();
 
+    // Listen to incoming shared images while app is open
     _intentDataStreamSubscription = ReceiveSharingIntent.instance
         .getMediaStream()
         .listen((List<SharedMediaFile> value) {
@@ -194,6 +195,7 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     });
 
+    // Handle shared image if app was opened directly from share menu
     ReceiveSharingIntent.instance.getInitialMedia().then((value) {
       if (value.isNotEmpty && value.first.path.isNotEmpty) {
         _showSaveDialog(value.first.path);
