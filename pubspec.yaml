@@ -9,7 +9,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Set up Java 17
@@ -21,17 +21,41 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.22.2'
           channel: 'stable'
 
-      - name: Generate Complete Scaffolding
+      - name: Build Android Project Structure
         run: |
-          mkdir temp_app
-          flutter create --org com.example --project-name mistake_book temp_app
-          cp -r temp_app/android ./
-          rm -rf temp_app
-          
-          # Inject share intent into AndroidManifest
-          sed -i '/<\/activity>/i <intent-filter><action android:name="android.intent.action.SEND" \/><category android:name="android.intent.category.DEFAULT" \/><data android:mimeType="image\/*" \/><\/intent-filter>' android/app/src/main/AndroidManifest.xml
+          # 1. Back up user files
+          mkdir -p /tmp/backup
+          cp pubspec.yaml /tmp/backup/
+          cp lib/main.dart /tmp/backup/
+
+          # 2. Re-create complete Flutter project cleanly
+          rm -rf * .git* || true
+          git init
+          flutter create --org com.example --project-name mistake_book .
+
+          # 3. Restore user files
+          cp /tmp/backup/pubspec.yaml ./
+          cp /tmp/backup/main.dart ./lib/
+
+          # 4. Safely insert Share Intent filter right before the last closing activity tag
+          python3 -c "
+          with open('android/app/src/main/AndroidManifest.xml', 'r') as f:
+              content = f.read()
+          intent_str = '''
+                      <intent-filter>
+                          <action android:name=\"android.intent.action.SEND\" />
+                          <category android:name=\"android.intent.category.DEFAULT\" />
+                          <data android:mimeType=\"image/*\" />
+                      </intent-filter>
+                  </activity>'''
+          if '<data android:mimeType=\"image/*\" />' not in content:
+              content = content.replace('</activity>', intent_str, 1)
+              with open('android/app/src/main/AndroidManifest.xml', 'w') as f:
+                  f.write(content)
+          "
 
       - name: Install dependencies
         run: flutter pub get
