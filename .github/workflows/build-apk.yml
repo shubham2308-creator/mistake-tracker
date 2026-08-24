@@ -27,37 +27,30 @@ jobs:
       - name: Setup Permanent Signing Certificate
         run: |
           mkdir -p ~/.android
-          # Generate deterministic private key & certificate pair
           openssl req -x509 -newkey rsa:2048 -keyout /tmp/app_key.pem -out /tmp/app_cert.pem \
             -days 10000 -nodes -subj "/CN=MistakeBookApp/O=MistakeBook/C=IN" -batch
 
-          # Export to standard Android debug keystore format
           openssl pkcs12 -export -in /tmp/app_cert.pem -inkey /tmp/app_key.pem \
             -out ~/.android/debug.keystore -name androiddebugkey -passout pass:android
 
       - name: Scaffold & Configure Android
         run: |
-          # 1. Back up main.dart
           mkdir -p /tmp/backup
           cp lib/main.dart /tmp/backup/main.dart
 
-          # 2. Generate clean project structure
           flutter create --org com.example --project-name mistake_book .
           cp /tmp/backup/main.dart ./lib/main.dart
 
-          # 3. Add required dependencies
-          flutter pub add sqflite path_provider path receive_sharing_intent image_picker
+          # Explicitly add Android v2 embedding-compliant versions
+          flutter pub add sqflite:^2.3.3+1 path_provider:^2.1.3 path:^1.9.0 receive_sharing_intent:^2.0.0 image_picker:^1.1.2
 
-          # 4. Set required SDK versions in android/app/build.gradle
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/' android/app/build.gradle || true
           sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 34/' android/app/build.gradle || true
           sed -i 's/targetSdkVersion flutter.targetSdkVersion/targetSdkVersion 34/' android/app/build.gradle || true
 
-          # 5. Enable AndroidX and Jetifier in gradle.properties
           echo "android.useAndroidX=true" >> android/gradle.properties
           echo "android.enableJetifier=true" >> android/gradle.properties
 
-          # 6. Safely inject Share Intent filter into AndroidManifest.xml
           python3 -c "
           manifest_path = 'android/app/src/main/AndroidManifest.xml'
           with open(manifest_path, 'r', encoding='utf-8') as f:
