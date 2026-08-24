@@ -18,6 +18,7 @@ class QuestionItem {
   final String subject;
   final String chapter;
   final String errorType;
+  final String difficulty; // Easy, Medium, Hard
   int isSolved;
 
   QuestionItem({
@@ -26,6 +27,7 @@ class QuestionItem {
     required this.subject,
     required this.chapter,
     required this.errorType,
+    this.difficulty = 'Medium',
     this.isSolved = 0,
   });
 
@@ -35,6 +37,7 @@ class QuestionItem {
         'subject': subject,
         'chapter': chapter,
         'errorType': errorType,
+        'difficulty': difficulty,
         'isSolved': isSolved,
       };
 
@@ -44,7 +47,8 @@ class QuestionItem {
         subject: map['subject'],
         chapter: map['chapter'],
         errorType: map['errorType'],
-        isSolved: map['isSolved'],
+        difficulty: map['difficulty'] ?? 'Medium',
+        isSolved: map['isSolved'] ?? 0,
       );
 }
 
@@ -55,25 +59,30 @@ class DatabaseHelper {
 
   Future<Database> get database async {
     if (_database != null) return _database!;
-    _database = await _initDB('mistake_book.db');
+    _database = await _initDB('mistake_book_v2.db');
     return _database!;
   }
 
   Future<Database> _initDB(String filePath) async {
     final dbPath = await getDatabasesPath();
     final path = p.join(dbPath, filePath);
-    return await openDatabase(path, version: 1, onCreate: (db, version) async {
-      await db.execute('''
-        CREATE TABLE questions (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          imagePath TEXT NOT NULL,
-          subject TEXT NOT NULL,
-          chapter TEXT NOT NULL,
-          errorType TEXT NOT NULL,
-          isSolved INTEGER NOT NULL
-        )
-      ''');
-    });
+    return await openDatabase(
+      path,
+      version: 1,
+      onCreate: (db, version) async {
+        await db.execute('''
+          CREATE TABLE questions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            imagePath TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            chapter TEXT NOT NULL,
+            errorType TEXT NOT NULL,
+            difficulty TEXT NOT NULL,
+            isSolved INTEGER NOT NULL
+          )
+        ''');
+      },
+    );
   }
 
   Future<int> insertQuestion(QuestionItem item) async {
@@ -81,32 +90,57 @@ class DatabaseHelper {
     return await db.insert('questions', item.toMap());
   }
 
-  Future<List<QuestionItem>> getQuestions({String? subject, int? isSolved}) async {
+  Future<List<QuestionItem>> getQuestions({
+    String? subject,
+    String? difficulty,
+    int? isSolved,
+  }) async {
     final db = await instance.database;
-    String whereString = '';
+    List<String> whereClauses = [];
     List<dynamic> whereArgs = [];
 
     if (subject != null && subject != 'All') {
-      whereString += 'subject = ?';
+      whereClauses.add('subject = ?');
       whereArgs.add(subject);
     }
+    if (difficulty != null && difficulty != 'All') {
+      whereClauses.add('difficulty = ?');
+      whereArgs.add(difficulty);
+    }
     if (isSolved != null) {
-      if (whereString.isNotEmpty) whereString += ' AND ';
-      whereString += 'isSolved = ?';
+      whereClauses.add('isSolved = ?');
       whereArgs.add(isSolved);
     }
 
-    final result = await db.query('questions',
-        where: whereString.isEmpty ? null : whereString,
-        whereArgs: whereArgs.isEmpty ? null : whereArgs,
-        orderBy: 'id DESC');
+    final whereString = whereClauses.isNotEmpty ? whereClauses.join(' AND ') : null;
+
+    final result = await db.query(
+      'questions',
+      where: whereString,
+      whereArgs: whereArgs.isNotEmpty ? whereArgs : null,
+      orderBy: 'id DESC',
+    );
     return result.map((e) => QuestionItem.fromMap(e)).toList();
   }
 
   Future<void> toggleSolved(int id, int currentStatus) async {
     final db = await instance.database;
-    await db.update('questions', {'isSolved': currentStatus == 1 ? 0 : 1},
-        where: 'id = ?', whereArgs: [id]);
+    await db.update(
+      'questions',
+      {'isSolved': currentStatus == 1 ? 0 : 1},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<void> updateDifficulty(int id, String newDiff) async {
+    final db = await instance.database;
+    await db.update(
+      'questions',
+      {'difficulty': newDiff},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
   }
 }
 
@@ -117,13 +151,15 @@ class ErrorBookApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Mistake Book',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
         brightness: Brightness.light,
-        primarySwatch: Colors.indigo,
+        colorSchemeSeed: Colors.indigo,
         useMaterial3: true,
       ),
       darkTheme: ThemeData(
         brightness: Brightness.dark,
+        colorSchemeSeed: Colors.indigo,
         useMaterial3: true,
       ),
       home: const HomeScreen(),
@@ -142,7 +178,8 @@ class _HomeScreenState extends State<HomeScreen> {
   late StreamSubscription _intentDataStreamSubscription;
   List<QuestionItem> questions = [];
   String selectedSubject = 'All';
-  bool showOnlyUnsolved = true;
+  String selectedDifficulty = 'All';
+  bool showOnlyUnsolved = false;
 
   @override
   void initState() {
@@ -173,6 +210,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _loadQuestions() async {
     final list = await DatabaseHelper.instance.getQuestions(
       subject: selectedSubject,
+      difficulty: selectedDifficulty,
       isSolved: showOnlyUnsolved ? 0 : null,
     );
     setState(() {
@@ -184,13 +222,14 @@ class _HomeScreenState extends State<HomeScreen> {
     final subjectController = TextEditingController(text: 'Physics');
     final chapterController = TextEditingController();
     String errorType = 'Conceptual';
+    String difficulty = 'Medium';
 
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (ctx) => StatefulBuilder(builder: (context, setDialogState) {
         return AlertDialog(
-          title: const Text('Categorize Question'),
+          title: const Text('Save to Mistake Book'),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -203,13 +242,15 @@ class _HomeScreenState extends State<HomeScreen> {
                   onChanged: (v) => setDialogState(() => subjectController.text = v!),
                   decoration: const InputDecoration(labelText: 'Subject'),
                 ),
+                const SizedBox(height: 8),
                 TextField(
                   controller: chapterController,
                   decoration: const InputDecoration(
                     labelText: 'Chapter Name',
-                    hintText: 'e.g. Rotational Motion',
+                    hintText: 'e.g. Thermodynamics',
                   ),
                 ),
+                const SizedBox(height: 8),
                 DropdownButtonFormField<String>(
                   value: errorType,
                   items: ['Conceptual', 'Calculation', 'Time Trap', 'Silly Mistake']
@@ -217,6 +258,15 @@ class _HomeScreenState extends State<HomeScreen> {
                       .toList(),
                   onChanged: (v) => setDialogState(() => errorType = v!),
                   decoration: const InputDecoration(labelText: 'Error Reason'),
+                ),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  value: difficulty,
+                  items: ['Easy', 'Medium', 'Hard']
+                      .map((s) => DropdownMenuItem(value: s, child: Text(s)))
+                      .toList(),
+                  onChanged: (v) => setDialogState(() => difficulty = v!),
+                  decoration: const InputDecoration(labelText: 'Difficulty Level'),
                 ),
               ],
             ),
@@ -226,7 +276,7 @@ class _HomeScreenState extends State<HomeScreen> {
               onPressed: () => Navigator.pop(ctx),
               child: const Text('Discard'),
             ),
-            ElevatedButton(
+            FilledButton(
               onPressed: () async {
                 final appDir = await getApplicationDocumentsDirectory();
                 final fileName = p.basename(tempPath);
@@ -240,13 +290,14 @@ class _HomeScreenState extends State<HomeScreen> {
                         ? 'General'
                         : chapterController.text.trim(),
                     errorType: errorType,
+                    difficulty: difficulty,
                   ),
                 );
 
-                Navigator.pop(ctx);
+                if (mounted) Navigator.pop(ctx);
                 _loadQuestions();
               },
-              child: const Text('Save to Book'),
+              child: const Text('Save'),
             )
           ],
         );
@@ -254,15 +305,36 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Color _getDifficultyColor(String diff) {
+    switch (diff) {
+      case 'Easy':
+        return Colors.green;
+      case 'Hard':
+        return Colors.redAccent;
+      case 'Medium':
+      default:
+        return Colors.orange;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    // Group questions by Chapter
+    final Map<String, List<QuestionItem>> chapterGroups = {};
+    for (var q in questions) {
+      chapterGroups.putIfAbsent('${q.subject} - ${q.chapter}', () => []).add(q);
+    }
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Improvement Book'),
+        title: const Text('Mistake Book Index'),
         actions: [
           IconButton(
-            icon: Icon(showOnlyUnsolved ? Icons.check_circle_outline : Icons.all_inbox),
-            tooltip: 'Toggle Solved / Unsolved',
+            icon: Icon(
+              showOnlyUnsolved ? Icons.filter_alt : Icons.filter_alt_off,
+              color: showOnlyUnsolved ? Colors.amber : null,
+            ),
+            tooltip: showOnlyUnsolved ? 'Showing Pending Only' : 'Showing All',
             onPressed: () {
               setState(() {
                 showOnlyUnsolved = !showOnlyUnsolved;
@@ -274,20 +346,19 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       body: Column(
         children: [
+          // Subject Filter
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
             child: Row(
               children: ['All', 'Physics', 'Chemistry', 'Biology'].map((subj) {
                 return Padding(
-                  padding: const EdgeInsets.only(right: 8.0),
-                  child: ChoiceChip(
+                  padding: const EdgeInsets.only(right: 6.0),
+                  child: FilterChip(
                     label: Text(subj),
                     selected: selectedSubject == subj,
                     onSelected: (val) {
-                      setState(() {
-                        selectedSubject = subj;
-                      });
+                      setState(() => selectedSubject = subj);
                       _loadQuestions();
                     },
                   ),
@@ -295,47 +366,164 @@ class _HomeScreenState extends State<HomeScreen> {
               }).toList(),
             ),
           ),
-          Expanded(
-            child: questions.isEmpty
-              ? const Center(
-                  child: Text(
-                    'No questions here! Take a screenshot and hit Share -> Mistake Book.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.grey),
+          // Difficulty Filter Bar
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            child: Row(
+              children: ['All', 'Easy', 'Medium', 'Hard'].map((diff) {
+                return Padding(
+                  padding: const EdgeInsets.only(right: 6.0),
+                  child: ChoiceChip(
+                    label: Text(diff),
+                    selected: selectedDifficulty == diff,
+                    selectedColor: diff == 'All'
+                        ? null
+                        : _getDifficultyColor(diff).withValues(alpha: 0.3),
+                    onSelected: (val) {
+                      setState(() => selectedDifficulty = diff);
+                      _loadQuestions();
+                    },
                   ),
-                )
-              : ListView.builder(
-                  itemCount: questions.length,
-                  itemBuilder: (ctx, i) {
-                    final q = questions[i];
-                    return Card(
-                      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                      clipBehavior: Clip.antiAlias,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          ListTile(
-                            title: Text('${q.subject} • ${q.chapter}'),
-                            subtitle: Text('Error: ${q.errorType}'),
-                            trailing: Checkbox(
-                              value: q.isSolved == 1,
-                              onChanged: (_) async {
-                                await DatabaseHelper.instance.toggleSolved(q.id!, q.isSolved);
-                                _loadQuestions();
-                              },
+                );
+              }).toList(),
+            ),
+          ),
+          const Divider(height: 1),
+          Expanded(
+            child: chapterGroups.isEmpty
+                ? const Center(
+                    child: Text(
+                      'No questions match filters.\nTake a screenshot and tap Share -> Mistake Book.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.grey),
+                    ),
+                  )
+                : ListView.builder(
+                    padding: const EdgeInsets.all(8),
+                    itemCount: chapterGroups.keys.length,
+                    itemBuilder: (ctx, i) {
+                      final chapterKey = chapterGroups.keys.elementAt(i);
+                      final qList = chapterGroups[chapterKey]!;
+                      final solvedCount = qList.where((q) => q.isSolved == 1).length;
+                      final allSolved = solvedCount == qList.length;
+
+                      return Card(
+                        margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          side: BorderSide(
+                            color: allSolved ? Colors.green.withValues(alpha: 0.5) : Colors.transparent,
+                            width: 1.5,
+                          ),
+                        ),
+                        child: ExpansionTile(
+                          leading: CircleAvatar(
+                            backgroundColor: allSolved
+                                ? Colors.green.withValues(alpha: 0.2)
+                                : Theme.of(context).colorScheme.primaryContainer,
+                            child: Icon(
+                              allSolved ? Icons.check_circle : Icons.menu_book,
+                              color: allSolved ? Colors.green : null,
                             ),
                           ),
-                          Image.file(
-                            File(q.imagePath),
-                            fit: BoxFit.contain,
-                            width: double.infinity,
+                          title: Text(
+                            chapterKey,
+                            style: const TextStyle(fontWeight: FontWeight.bold),
                           ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
-          )
+                          subtitle: Text(
+                            '$solvedCount/${qList.length} Reviewed',
+                            style: TextStyle(
+                              color: allSolved ? Colors.green : Colors.grey,
+                              fontSize: 12,
+                            ),
+                          ),
+                          children: qList.map((q) {
+                            final isReviewed = q.isSolved == 1;
+
+                            return Container(
+                              margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                              decoration: BoxDecoration(
+                                border: Border.all(
+                                  color: isReviewed ? Colors.green : Colors.grey.shade300,
+                                  width: isReviewed ? 2 : 1,
+                                ),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  ListTile(
+                                    dense: true,
+                                    title: Text('Error: ${q.errorType}'),
+                                    subtitle: Row(
+                                      children: [
+                                        const Text('Level: '),
+                                        DropdownButton<String>(
+                                          value: q.difficulty,
+                                          isDense: true,
+                                          underline: const SizedBox(),
+                                          items: ['Easy', 'Medium', 'Hard'].map((d) {
+                                            return DropdownMenuItem(
+                                              value: d,
+                                              child: Text(
+                                                d,
+                                                style: TextStyle(
+                                                  color: _getDifficultyColor(d),
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                            );
+                                          }).toList(),
+                                          onChanged: (newVal) async {
+                                            if (newVal != null) {
+                                              await DatabaseHelper.instance
+                                                  .updateDifficulty(q.id!, newVal);
+                                              _loadQuestions();
+                                            }
+                                          },
+                                        ),
+                                      ],
+                                    ),
+                                    trailing: ElevatedButton.icon(
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: isReviewed
+                                            ? Colors.green
+                                            : Theme.of(context).colorScheme.surfaceContainerHighest,
+                                        foregroundColor: isReviewed ? Colors.white : null,
+                                      ),
+                                      icon: Icon(
+                                        isReviewed ? Icons.check_circle : Icons.radio_button_unchecked,
+                                        size: 18,
+                                        color: isReviewed ? Colors.white : Colors.green,
+                                      ),
+                                      label: Text(isReviewed ? 'Reviewed' : 'Mark Reviewed'),
+                                      onPressed: () async {
+                                        await DatabaseHelper.instance.toggleSolved(q.id!, q.isSolved);
+                                        _loadQuestions();
+                                      },
+                                    ),
+                                  ),
+                                  ClipRRect(
+                                    borderRadius: const BorderRadius.only(
+                                      bottomLeft: Radius.circular(8),
+                                      bottomRight: Radius.circular(8),
+                                    ),
+                                    child: Image.file(
+                                      File(q.imagePath),
+                                      fit: BoxFit.contain,
+                                      width: double.infinity,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      );
+                    },
+                  ),
+          ),
         ],
       ),
     );
