@@ -1,18 +1,46 @@
-name: mistake_book
-description: Offline Error Tracker App
-publish_to: 'none'
-version: 1.0.0+1
+name: Build APK
 
-environment:
-  sdk: '>=3.0.0 <4.0.0'
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
 
-dependencies:
-  flutter:
-    sdk: flutter
-  sqflite: ^2.3.0
-  path_provider: ^2.1.2
-  path: ^1.9.0
-  receive_sharing_intent: ^1.4.5
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-flutter:
-  uses-material-design: true
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Generate Complete Scaffolding
+        run: |
+          mkdir temp_app
+          flutter create --org com.example --project-name mistake_book temp_app
+          cp -r temp_app/android ./
+          rm -rf temp_app
+          
+          # Inject share intent into AndroidManifest
+          sed -i '/<\/activity>/i <intent-filter><action android:name="android.intent.action.SEND" \/><category android:name="android.intent.category.DEFAULT" \/><data android:mimeType="image\/*" \/><\/intent-filter>' android/app/src/main/AndroidManifest.xml
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Release APK
+        run: flutter build apk --release
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mistake-book-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
