@@ -18,42 +18,46 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Set up Flutter
+      - name: Set up Flutter 3.22.2
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.22.2'
           channel: 'stable'
 
-      - name: Cache Permanent Signing Key
-        uses: actions/cache@v4
-        with:
-          path: ~/.android/debug.keystore
-          key: mistake-book-permanent-key-v3
-
-      - name: Setup Permanent Signing Key
+      - name: Setup Permanent Signing Certificate
         run: |
           mkdir -p ~/.android
-          if [ ! -f ~/.android/debug.keystore ]; then
-            keytool -genkeypair -alias androiddebugkey -keypass android \
-              -keystore ~/.android/debug.keystore -storepass android \
-              -dname "CN=Android Debug,O=Android,C=US" -validity 10000 \
-              -keyalg RSA -keysize 2048
-          fi
+          # Generate deterministic private key & certificate pair
+          openssl req -x509 -newkey rsa:2048 -keyout /tmp/app_key.pem -out /tmp/app_cert.pem \
+            -days 10000 -nodes -subj "/CN=MistakeBookApp/O=MistakeBook/C=IN" -batch
 
-      - name: Setup Flutter App & Intent Filter
+          # Export to standard Android debug keystore format
+          openssl pkcs12 -export -in /tmp/app_cert.pem -inkey /tmp/app_key.pem \
+            -out ~/.android/debug.keystore -name androiddebugkey -passout pass:android
+
+      - name: Scaffold & Configure Android
         run: |
-          # Save user code
-          mkdir -p /tmp/app_code
-          cp lib/main.dart /tmp/app_code/main.dart
+          # 1. Back up main.dart
+          mkdir -p /tmp/backup
+          cp lib/main.dart /tmp/backup/main.dart
 
-          # Create clean Flutter project
-          flutter create --org com.example --project-name mistake_book /tmp/flutter_scaffold
-          cp -r /tmp/flutter_scaffold/android ./
-          cp /tmp/app_code/main.dart ./lib/main.dart
+          # 2. Generate clean project structure
+          flutter create --org com.example --project-name mistake_book .
+          cp /tmp/backup/main.dart ./lib/main.dart
 
-          # Add packages
+          # 3. Add required dependencies
           flutter pub add sqflite path_provider path receive_sharing_intent image_picker
 
-          # Inject Share Intent safely into AndroidManifest
+          # 4. Set required SDK versions in android/app/build.gradle
+          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/' android/app/build.gradle || true
+          sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 34/' android/app/build.gradle || true
+          sed -i 's/targetSdkVersion flutter.targetSdkVersion/targetSdkVersion 34/' android/app/build.gradle || true
+
+          # 5. Enable AndroidX and Jetifier in gradle.properties
+          echo "android.useAndroidX=true" >> android/gradle.properties
+          echo "android.enableJetifier=true" >> android/gradle.properties
+
+          # 6. Safely inject Share Intent filter into AndroidManifest.xml
           python3 -c "
           manifest_path = 'android/app/src/main/AndroidManifest.xml'
           with open(manifest_path, 'r', encoding='utf-8') as f:
