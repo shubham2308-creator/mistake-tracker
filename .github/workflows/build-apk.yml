@@ -23,42 +23,43 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Setup Project Structure & Dependencies
-        run: |
-          mkdir -p /tmp/app_code
-          cp lib/main.dart /tmp/app_code/main.dart
-
-          flutter create --org com.example --project-name mistake_book /tmp/flutter_scaffold
-          cp -r /tmp/flutter_scaffold/android ./
-          cp /tmp/app_code/main.dart ./lib/main.dart
-
-          flutter pub add sqflite path_provider path receive_sharing_intent image_picker
+      - name: Cache Permanent Signing Key
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: mistake-book-permanent-key-v3
 
       - name: Setup Permanent Signing Key
         run: |
           mkdir -p ~/.android
-          mkdir -p android/app
+          if [ ! -f ~/.android/debug.keystore ]; then
+            keytool -genkeypair -alias androiddebugkey -keypass android \
+              -keystore ~/.android/debug.keystore -storepass android \
+              -dname "CN=Android Debug,O=Android,C=US" -validity 10000 \
+              -keyalg RSA -keysize 2048
+          fi
 
-          # Create permanent keystore with fixed credentials
-          keytool -genkeypair -alias upload -keyalg RSA -keysize 2048 -validity 10000 \
-            -keystore android/app/upload-keystore.jks -storepass mistake_book_key_123 \
-            -keypass mistake_book_key_123 -dname "CN=MistakeBook, O=MistakeBook, C=IN"
-
-          # Mirror to debug keystore location for seamless fallback
-          cp android/app/upload-keystore.jks ~/.android/debug.keystore
-
-      - name: Configure Manifest and Build Files
+      - name: Setup Flutter App & Intent Filter
         run: |
+          # Save user code
+          mkdir -p /tmp/app_code
+          cp lib/main.dart /tmp/app_code/main.dart
+
+          # Create clean Flutter project
+          flutter create --org com.example --project-name mistake_book /tmp/flutter_scaffold
+          cp -r /tmp/flutter_scaffold/android ./
+          cp /tmp/app_code/main.dart ./lib/main.dart
+
+          # Add packages
+          flutter pub add sqflite path_provider path receive_sharing_intent image_picker
+
+          # Inject Share Intent safely into AndroidManifest
           python3 -c "
-          import os
-
-          # 1. Safely add Share Intent to AndroidManifest.xml
           manifest_path = 'android/app/src/main/AndroidManifest.xml'
-          if os.path.exists(manifest_path):
-              with open(manifest_path, 'r', encoding='utf-8') as f:
-                  manifest = f.read()
+          with open(manifest_path, 'r', encoding='utf-8') as f:
+              manifest = f.read()
 
-              intent_block = '''
+          intent_block = '''
                       <intent-filter>
                           <action android:name=\"android.intent.action.SEND\" />
                           <category android:name=\"android.intent.category.DEFAULT\" />
@@ -66,60 +67,10 @@ jobs:
                       </intent-filter>
                   </activity>'''
 
-              if 'android.intent.action.SEND' not in manifest and '</activity>' in manifest:
-                  manifest = manifest.replace('</activity>', intent_block, 1)
-                  with open(manifest_path, 'w', encoding='utf-8') as f:
-                      f.write(manifest)
-
-          # 2. Configure permanent signing in Groovy or Kotlin DSL
-          gradle_groovy = 'android/app/build.gradle'
-          gradle_kotlin = 'android/app/build.gradle.kts'
-
-          if os.path.exists(gradle_groovy):
-              with open(gradle_groovy, 'r', encoding='utf-8') as f:
-                  gradle = f.read()
-              if 'signingConfigs {' not in gradle and 'buildTypes {' in gradle:
-                  signing = '''
-              signingConfigs {
-                  release {
-                      keyAlias 'upload'
-                      keyPassword 'mistake_book_key_123'
-                      storeFile file('upload-keystore.jks')
-                      storePassword 'mistake_book_key_123'
-                  }
-              }
-              buildTypes {
-                  release {
-                      signingConfig signingConfigs.release
-                  }
-              }
-          '''
-                  gradle = gradle.replace('buildTypes {', signing, 1)
-                  with open(gradle_groovy, 'w', encoding='utf-8') as f:
-                      f.write(gradle)
-
-          elif os.path.exists(gradle_kotlin):
-              with open(gradle_kotlin, 'r', encoding='utf-8') as f:
-                  gradle = f.read()
-              if 'signingConfigs {' not in gradle and 'buildTypes {' in gradle:
-                  signing = '''
-              signingConfigs {
-                  create(\"release\") {
-                      keyAlias = \"upload\"
-                      keyPassword = \"mistake_book_key_123\"
-                      storeFile = file(\"upload-keystore.jks\")
-                      storePassword = \"mistake_book_key_123\"
-                  }
-              }
-              buildTypes {
-                  release {
-                      signingConfig = signingConfigs.getByName(\"release\")
-                  }
-              }
-          '''
-                  gradle = gradle.replace('buildTypes {', signing, 1)
-                  with open(gradle_kotlin, 'w', encoding='utf-8') as f:
-                      f.write(gradle)
+          if 'android.intent.action.SEND' not in manifest and '</activity>' in manifest:
+              manifest = manifest.replace('</activity>', intent_block, 1)
+              with open(manifest_path, 'w', encoding='utf-8') as f:
+                  f.write(manifest)
           "
 
       - name: Build Release APK
