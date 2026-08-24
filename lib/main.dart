@@ -18,7 +18,7 @@ class QuestionItem {
   final String subject;
   final String chapter;
   final String errorType;
-  final String difficulty; // Easy, Medium, Hard
+  final String difficulty;
   int isSolved;
 
   QuestionItem({
@@ -154,13 +154,13 @@ class ErrorBookApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         brightness: Brightness.light,
-        colorSchemeSeed: Colors.indigo,
-        useMaterial3: true,
+        primarySwatch: Colors.indigo,
+        useMaterial3: false,
       ),
       darkTheme: ThemeData(
         brightness: Brightness.dark,
-        colorSchemeSeed: Colors.indigo,
-        useMaterial3: true,
+        primarySwatch: Colors.indigo,
+        useMaterial3: false,
       ),
       home: const HomeScreen(),
     );
@@ -276,7 +276,7 @@ class _HomeScreenState extends State<HomeScreen> {
               onPressed: () => Navigator.pop(ctx),
               child: const Text('Discard'),
             ),
-            FilledButton(
+            ElevatedButton(
               onPressed: () async {
                 final appDir = await getApplicationDocumentsDirectory();
                 final fileName = p.basename(tempPath);
@@ -319,7 +319,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Group questions by Chapter
     final Map<String, List<QuestionItem>> chapterGroups = {};
     for (var q in questions) {
       chapterGroups.putIfAbsent('${q.subject} - ${q.chapter}', () => []).add(q);
@@ -346,7 +345,6 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       body: Column(
         children: [
-          // Subject Filter
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -366,7 +364,6 @@ class _HomeScreenState extends State<HomeScreen> {
               }).toList(),
             ),
           ),
-          // Difficulty Filter Bar
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -379,7 +376,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     selected: selectedDifficulty == diff,
                     selectedColor: diff == 'All'
                         ? null
-                        : _getDifficultyColor(diff).withValues(alpha: 0.3),
+                        : _getDifficultyColor(diff).withOpacity(0.3),
                     onSelected: (val) {
                       setState(() => selectedDifficulty = diff);
                       _loadQuestions();
@@ -394,7 +391,7 @@ class _HomeScreenState extends State<HomeScreen> {
             child: chapterGroups.isEmpty
                 ? const Center(
                     child: Text(
-                      'No questions match filters.\nTake a screenshot and tap Share -> Mistake Book.',
+                      'No questions found.\nShare a screenshot to Mistake Book to add one!',
                       textAlign: TextAlign.center,
                       style: TextStyle(color: Colors.grey),
                     ),
@@ -413,18 +410,18 @@ class _HomeScreenState extends State<HomeScreen> {
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
                           side: BorderSide(
-                            color: allSolved ? Colors.green.withValues(alpha: 0.5) : Colors.transparent,
+                            color: allSolved ? Colors.green.withOpacity(0.5) : Colors.transparent,
                             width: 1.5,
                           ),
                         ),
                         child: ExpansionTile(
                           leading: CircleAvatar(
                             backgroundColor: allSolved
-                                ? Colors.green.withValues(alpha: 0.2)
-                                : Theme.of(context).colorScheme.primaryContainer,
+                                ? Colors.green.withOpacity(0.2)
+                                : Colors.indigo.withOpacity(0.1),
                             child: Icon(
                               allSolved ? Icons.check_circle : Icons.menu_book,
-                              color: allSolved ? Colors.green : null,
+                              color: allSolved ? Colors.green : Colors.indigo,
                             ),
                           ),
                           title: Text(
@@ -487,15 +484,13 @@ class _HomeScreenState extends State<HomeScreen> {
                                     ),
                                     trailing: ElevatedButton.icon(
                                       style: ElevatedButton.styleFrom(
-                                        backgroundColor: isReviewed
-                                            ? Colors.green
-                                            : Theme.of(context).colorScheme.surfaceContainerHighest,
-                                        foregroundColor: isReviewed ? Colors.white : null,
+                                        backgroundColor: isReviewed ? Colors.green : Colors.grey.shade200,
+                                        foregroundColor: isReviewed ? Colors.white : Colors.black87,
                                       ),
                                       icon: Icon(
                                         isReviewed ? Icons.check_circle : Icons.radio_button_unchecked,
                                         size: 18,
-                                        color: isReviewed ? Colors.white : Colors.green,
+                                        color: isReviewed ? Colors.white : Colors.grey,
                                       ),
                                       label: Text(isReviewed ? 'Reviewed' : 'Mark Reviewed'),
                                       onPressed: () async {
