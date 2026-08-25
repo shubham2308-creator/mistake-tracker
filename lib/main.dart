@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
@@ -186,18 +187,16 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _loadQuestions();
 
-    // Listen to incoming shared images while app is open
-    _intentDataStreamSubscription = ReceiveSharingIntent.instance
-        .getMediaStream()
-        .listen((List<SharedMediaFile> value) {
-      if (value.isNotEmpty && value.first.path.isNotEmpty) {
+    // V2 Receive Sharing Intent - Stream for when app is active
+    _intentDataStreamSubscription = ReceiveSharingIntent.instance.getMediaStream().listen((List<SharedMediaFile> value) {
+      if (value.isNotEmpty) {
         _showSaveDialog(value.first.path);
       }
     });
 
-    // Handle shared image if app was opened directly from share menu
-    ReceiveSharingIntent.instance.getInitialMedia().then((value) {
-      if (value.isNotEmpty && value.first.path.isNotEmpty) {
+    // V2 Receive Sharing Intent - Check initial launch
+    ReceiveSharingIntent.instance.getInitialMedia().then((List<SharedMediaFile> value) {
+      if (value.isNotEmpty) {
         _showSaveDialog(value.first.path);
       }
     });
@@ -218,6 +217,14 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       questions = list;
     });
+  }
+
+  Future<void> _pickFromGallery() async {
+    final picker = ImagePicker();
+    final pickedFile = await picker.pickImage(source: ImageSource.gallery);
+    if (pickedFile != null) {
+      _showSaveDialog(pickedFile.path);
+    }
   }
 
   Future<void> _showSaveDialog(String tempPath) async {
@@ -345,6 +352,11 @@ class _HomeScreenState extends State<HomeScreen> {
           )
         ],
       ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _pickFromGallery,
+        tooltip: 'Add Screenshot from Gallery',
+        child: const Icon(Icons.add_photo_alternate),
+      ),
       body: Column(
         children: [
           SingleChildScrollView(
@@ -393,7 +405,7 @@ class _HomeScreenState extends State<HomeScreen> {
             child: chapterGroups.isEmpty
                 ? const Center(
                     child: Text(
-                      'No questions found.\nShare a screenshot to Mistake Book to add one!',
+                      'No questions found.\nTap the + button or Share a screenshot to add one!',
                       textAlign: TextAlign.center,
                       style: TextStyle(color: Colors.grey),
                     ),
