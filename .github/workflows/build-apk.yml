@@ -25,15 +25,22 @@ jobs:
 
       - name: Scaffold Clean Flutter Project
         run: |
-          cp lib/main.dart /tmp/main.dart
-          cp pubspec.yaml /tmp/pubspec.yaml
+          # 1. Safely backup your code without crashing if a file is delayed
+          mkdir -p /tmp/backup
+          cp -r lib/ /tmp/backup/ || true
+          cp pubspec.yaml /tmp/backup/ || true
           
+          # 2. Clean the old Android setup
           rm -rf android/
+          
+          # 3. Create a fresh, modernized Flutter setup
           flutter create --org com.example --project-name mistake_book .
           
-          cp /tmp/main.dart lib/main.dart
-          cp /tmp/pubspec.yaml pubspec.yaml
+          # 4. Safely restore your custom code over the default setup
+          cp -r /tmp/backup/lib/* lib/ || true
+          cp /tmp/backup/pubspec.yaml pubspec.yaml || true
           
+          # 5. Fetch dependencies
           flutter pub get
 
       - name: Configure Android Enforcements
