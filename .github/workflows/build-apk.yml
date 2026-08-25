@@ -25,17 +25,13 @@ jobs:
 
       - name: Scaffold Clean Flutter Project
         run: |
-          mkdir -p /tmp/app_code
-          cp lib/main.dart /tmp/app_code/main.dart
-          cp pubspec.yaml /tmp/app_code/pubspec.yaml
-
-          rm -rf * .git* || true
-          git init
+          # Safely remove ONLY the old android folder to force a modern regeneration
+          rm -rf android/
+          
+          # Recreate the Android structure securely without touching your Dart code
           flutter create --org com.example --project-name mistake_book .
           
-          cp /tmp/app_code/main.dart ./lib/main.dart
-          cp /tmp/app_code/pubspec.yaml ./pubspec.yaml
-
+          # Download packages
           flutter pub get
 
       - name: Configure Android Enforcements
