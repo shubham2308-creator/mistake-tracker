@@ -18,39 +18,38 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Set up Flutter 3.22.2
+      - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.22.2'
           channel: 'stable'
 
-      - name: Setup Permanent Signing Certificate
+      - name: Scaffold Clean Flutter Project
         run: |
-          mkdir -p ~/.android
-          openssl req -x509 -newkey rsa:2048 -keyout /tmp/app_key.pem -out /tmp/app_cert.pem \
-            -days 10000 -nodes -subj "/CN=MistakeBookApp/O=MistakeBook/C=IN" -batch
+          mkdir -p /tmp/app_code
+          cp lib/main.dart /tmp/app_code/main.dart
+          cp pubspec.yaml /tmp/app_code/pubspec.yaml
 
-          openssl pkcs12 -export -in /tmp/app_cert.pem -inkey /tmp/app_key.pem \
-            -out ~/.android/debug.keystore -name androiddebugkey -passout pass:android
-
-      - name: Scaffold & Configure Android
-        run: |
-          mkdir -p /tmp/backup
-          cp lib/main.dart /tmp/backup/main.dart
-
+          rm -rf * .git* || true
+          git init
           flutter create --org com.example --project-name mistake_book .
-          cp /tmp/backup/main.dart ./lib/main.dart
+          
+          cp /tmp/app_code/main.dart ./lib/main.dart
+          cp /tmp/app_code/pubspec.yaml ./pubspec.yaml
 
-          # Explicitly add Android v2 embedding-compliant versions
-          flutter pub add sqflite:^2.3.3+1 path_provider:^2.1.3 path:^1.9.0 receive_sharing_intent:^2.0.0 image_picker:^1.1.2
+          flutter pub get
 
+      - name: Configure Android Enforcements
+        run: |
+          # Enforce SDK 34 for modern plugins
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/' android/app/build.gradle || true
           sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 34/' android/app/build.gradle || true
           sed -i 's/targetSdkVersion flutter.targetSdkVersion/targetSdkVersion 34/' android/app/build.gradle || true
 
+          # Enable AndroidX and Jetifier
           echo "android.useAndroidX=true" >> android/gradle.properties
           echo "android.enableJetifier=true" >> android/gradle.properties
 
+          # Safely inject the Share Intent filter
           python3 -c "
           manifest_path = 'android/app/src/main/AndroidManifest.xml'
           with open(manifest_path, 'r', encoding='utf-8') as f:
@@ -64,16 +63,35 @@ jobs:
                       </intent-filter>
                   </activity>'''
 
-          if 'android.intent.action.SEND' not in manifest and '</activity>' in manifest:
+          if 'android.intent.action.SEND' not in manifest:
               manifest = manifest.replace('</activity>', intent_block, 1)
               with open(manifest_path, 'w', encoding='utf-8') as f:
                   f.write(manifest)
           "
 
-      - name: Build Release APK
+      - name: Generate Permanent Signing Key
+        run: |
+          mkdir -p ~/.android
+          keytool -genkeypair -alias uploadkey -keypass android -keystore ~/.android/permanent.keystore -storepass android -dname "CN=MistakeBook,O=App,C=IN" -validity 10000 -keyalg RSA -keysize 2048
+
+      - name: Build Unsigned APK
         run: flutter build apk --release --no-tree-shake-icons
 
-      - name: Upload APK Artifact
+      - name: Manually Sign APK
+        run: |
+          APK_PATH="build/app/outputs/flutter-apk/app-release.apk"
+          BUILD_TOOLS_PATH=$(ls -d ${ANDROID_HOME}/build-tools/* | sort -V | tail -n1)
+          
+          # Align APK for Android OS compatibility
+          $BUILD_TOOLS_PATH/zipalign -v -p 4 $APK_PATH aligned.apk
+          
+          # Force signature using the permanent key
+          $BUILD_TOOLS_PATH/apksigner sign --ks ~/.android/permanent.keystore --ks-pass pass:android --key-pass pass:android --ks-key-alias uploadkey --out signed.apk aligned.apk
+          
+          # Replace the original file
+          mv signed.apk $APK_PATH
+
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: mistake-book-apk
