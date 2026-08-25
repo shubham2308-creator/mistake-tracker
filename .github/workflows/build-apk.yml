@@ -25,21 +25,28 @@ jobs:
 
       - name: Scaffold Clean Flutter Project
         run: |
-          # Safely remove ONLY the old android folder to force a modern regeneration
-          rm -rf android/
+          cp lib/main.dart /tmp/main.dart
+          cp pubspec.yaml /tmp/pubspec.yaml
           
-          # Recreate the Android structure securely without touching your Dart code
+          rm -rf android/
           flutter create --org com.example --project-name mistake_book .
           
-          # Download packages
+          cp /tmp/main.dart lib/main.dart
+          cp /tmp/pubspec.yaml pubspec.yaml
+          
           flutter pub get
 
       - name: Configure Android Enforcements
         run: |
-          # Enforce SDK 34 for modern plugins
+          # Target Kotlin DSL (build.gradle.kts)
+          sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 21/' android/app/build.gradle.kts || true
+          sed -i 's/targetSdk = flutter.targetSdkVersion/targetSdk = 34/' android/app/build.gradle.kts || true
+          sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 34/' android/app/build.gradle.kts || true
+
+          # Target Groovy DSL (build.gradle)
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/' android/app/build.gradle || true
-          sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 34/' android/app/build.gradle || true
           sed -i 's/targetSdkVersion flutter.targetSdkVersion/targetSdkVersion 34/' android/app/build.gradle || true
+          sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 34/' android/app/build.gradle || true
 
           # Enable AndroidX and Jetifier
           echo "android.useAndroidX=true" >> android/gradle.properties
@@ -47,11 +54,13 @@ jobs:
 
           # Safely inject the Share Intent filter
           python3 -c "
+          import os
           manifest_path = 'android/app/src/main/AndroidManifest.xml'
-          with open(manifest_path, 'r', encoding='utf-8') as f:
-              manifest = f.read()
+          if os.path.exists(manifest_path):
+              with open(manifest_path, 'r', encoding='utf-8') as f:
+                  manifest = f.read()
 
-          intent_block = '''
+              intent_block = '''
                       <intent-filter>
                           <action android:name=\"android.intent.action.SEND\" />
                           <category android:name=\"android.intent.category.DEFAULT\" />
@@ -59,10 +68,10 @@ jobs:
                       </intent-filter>
                   </activity>'''
 
-          if 'android.intent.action.SEND' not in manifest:
-              manifest = manifest.replace('</activity>', intent_block, 1)
-              with open(manifest_path, 'w', encoding='utf-8') as f:
-                  f.write(manifest)
+              if 'android.intent.action.SEND' not in manifest:
+                  manifest = manifest.replace('</activity>', intent_block, 1)
+                  with open(manifest_path, 'w', encoding='utf-8') as f:
+                      f.write(manifest)
           "
 
       - name: Generate Permanent Signing Key
